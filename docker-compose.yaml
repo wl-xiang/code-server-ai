@@ -42,7 +42,7 @@ services:
       # Go 包与构建缓存 (GOPATH, 含 pkg/mod 模块缓存)
       - ./volumes/go-workspace:/home/coder/go
       # (可选) 热升级 opencode: 放好新二进制后取消下行注释, `docker compose up -d` 即生效
-      # - ./opencode-bin-cli/opencode-linux-x64:/usr/local/bin/opencode:ro
+      # - ./opencode-bin-cli/opencode-linux-amd64:/usr/local/bin/opencode:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
       interval: 30s

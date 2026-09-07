@@ -1,4 +1,4 @@
-# code-server AI 开发环境镜像 (x86_64)
+# code-server AI 开发环境镜像 (x86_64 / ARM64)
 
 > **完整设计思路、踩坑修复记录与构建/打包/部署流程见 [DESIGN.md](DESIGN.md)，改镜像前必读。**
 
@@ -19,7 +19,7 @@
 | 编译链 | — | gcc/g++/make (node-gyp、pip 源码包编译用) |
 | 网络调试 | — | ping / nslookup / netstat 等 |
 
-## 本机构建
+## 本机构建 (x86_64, 原生)
 
 ```bash
 ./build.sh          # 构建并导出 code-server-ai_amd64.tar
@@ -31,6 +31,23 @@
 docker build --platform linux/amd64 -t code-server-ai:latest .
 docker save -o code-server-ai_amd64.tar code-server-ai:latest
 ```
+
+## 跨架构构建 (x86_64 + ARM64)
+
+```bash
+./buildx.sh             # 等同于 ./buildx.sh amd64, 只构建 x86_64
+./buildx.sh arm64       # 只构建 ARM64 (QEMU 模拟, 30-60 分钟, 勿中断)
+./buildx.sh all         # 两个架构都构建, 各导出一个 tgz
+```
+
+脚本自动完成：buildx 插件检查 → QEMU binfmt 预检与安装 → 选择 desktop-linux
+构建器 → 按架构构建并自检（`uname -m` / opencode / node / python / go）→
+`docker save | gzip` 导出 `results/code-server-image/code-server-image_docker-images_linux-<arch>.tgz`。
+
+- **arm64 包的镜像 tag 是 `code-server-ai:arm64`**，ARM 服务器上 load 后先
+  `docker tag code-server-ai:arm64 code-server-ai:latest` 再 compose up
+- 可选参数通过环境变量透传：`NODE_VERSION= GO_VERSION= APT_MIRROR= BASE_IMAGE=`
+- Docker Hub 不通时切镜像代理：`BASE_IMAGE=dockerproxy.net/codercom/code-server:latest ./buildx.sh arm64`
 
 构建参数（可选覆盖）：
 
@@ -55,8 +72,8 @@ docker compose down
 浏览器访问 `http://<服务器IP>:8080`，密码在 compose 的 `PASSWORD` 环境变量中。
 code-server 自带会话记忆：再次登录时会打开上一次浏览的目录。
 
-> ARM64 版本：Dockerfile 中把 x64 资源换成 arm64（opencode 二进制、Node/Go tarball、
-> yq 文件名）后用 `--platform linux/arm64` 构建，或找一台 ARM 机器原生构建（QEMU 太慢）。
+> ARM64 版本直接 `./buildx.sh arm64`（本机 QEMU 模拟构建），或在 ARM 机器上原生构建（更快）。
+> 双架构构建的详细说明见上文「跨架构构建」章节。
 
 ## 持久化目录一览
 
@@ -150,11 +167,11 @@ GOPROXY=off go build ./...   # 离线构建 (强制只用本地缓存)
 
 ## opencode 热升级
 
-镜像内已烧录 opencode。升级时把新二进制放到宿主机 `./opencode-bin-cli/opencode-linux-x64`，
+镜像内已烧录 opencode。升级时把新二进制放到宿主机 `./opencode-bin-cli/opencode-linux-amd64`，
 取消 `docker-compose.yaml` 里这行注释后 `docker compose up -d`：
 
 ```yaml
-- ./opencode-bin-cli/opencode-linux-x64:/usr/local/bin/opencode:ro
+- ./opencode-bin-cli/opencode-linux-amd64:/usr/local/bin/opencode:ro
 ```
 
 ## 常用验证命令（容器内）

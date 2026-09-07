@@ -156,15 +156,38 @@ python3 -m venv /home/coder/project/myapp/.venv
 
 ### 7.1 构建（构建机在线）
 ```bash
-./build.sh                        # = docker build + docker save 出未压缩 tar
+./build.sh                        # = docker build + docker save 出未压缩 tar (仅 amd64)
 # 固定版本示例:
 docker build --build-arg NODE_VERSION=24.13.1 --build-arg GO_VERSION=1.27.1 \
     --build-arg APT_MIRROR= -t code-server-ai:latest .
 ```
-- 默认构建 `linux/amd64`；ARM64 时把 Dockerfile 中的 x64 资源名换成 arm64
-  （opencode 二进制 / Node tarball / Go tarball / yq 文件名），强烈建议找原生
-  ARM 机器构建，QEMU 模拟极慢
-- opencode 二进制不在源码包里，重建前放 `opencode-bin-cli/opencode-linux-x64`
+- opencode 二进制不在源码包里，重建前放 `opencode-bin-cli/opencode-linux-amd64`
+  （arm64 构建还需 `opencode-linux-arm64`，两个架构的 COPY 都写进了 Dockerfile，
+  按 TARGETARCH 自动选择）
+
+### 7.1.1 跨架构构建（buildx.sh，amd64 原生 + arm64 QEMU 模拟）
+```bash
+./buildx.sh amd64    # 原生构建 amd64
+./buildx.sh arm64    # QEMU 模拟构建 arm64 (30-60 分钟起，勿中断)
+./buildx.sh all      # 双架构，各导出一个 tgz 到 results/
+```
+设计要点（踩坑沉淀）：
+- **QEMU binfmt 预检**：脚本先 `docker run --platform linux/arm64 alpine uname -m`
+  验证模拟可用，失败则 `tonistiigi/binfmt --install arm64` 自动安装
+- **构建器选 desktop-linux**（docker 驱动）：与 daemon 共享网络和镜像存储；
+  container 驱动构建器（multiarch）曾在容器内拉镜像遇网络故障，脚本显式避开
+- **Dockerfile 全参数化**：`ARG TARGETARCH`（buildx 自动注入 amd64/arm64）驱动
+  yq / Node / Python / Go / opencode / Oracle 六处资源按架构自动选择，
+  普通单架构 `docker build` 默认 amd64 行为不变
+- **Python 源两级回退**：npmmirror 镜像的 python-build-standalone（国内稳）→
+  GitHub API；全部 curl 带 `--retry 6 --retry-all-errors`
+- **BASE_IMAGE 可换**：Hub 网络抖动时
+  `BASE_IMAGE=dockerproxy.net/codercom/code-server:latest ./buildx.sh arm64`
+- **arm64 产物 tag 为 `code-server-ai:arm64`**，ARM 服务器 load 后需
+  `docker tag` 成 `code-server-ai:latest` 再 compose up（脚本末尾有提示）
+- Oracle Instant Client ARM64 无官方 latest 别名，用固定直链
+  （`ARG ORACLE_ARM64_URL`，Oracle 发新版后目录号会变，失效时去官方
+  linux-arm-aarch64 下载页取新链接）
 
 ### 7.2 打包（repo-deploy-packager Skill 规范）
 ```

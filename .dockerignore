@@ -1,3 +1,5 @@
-# 只把 opencode x64 二进制带进构建上下文, 其余全部忽略
+# 只把 opencode 双架构二进制带进构建上下文, 其余全部忽略
+# 文件名与 buildx 的 TARGETARCH 值一致, Dockerfile 里 COPY opencode-linux-${TARGETARCH}
 *
-!opencode-bin-cli/opencode-linux-x64
+!opencode-bin-cli/opencode-linux-amd64
+!opencode-bin-cli/opencode-linux-arm64

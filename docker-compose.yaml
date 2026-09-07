@@ -1,0 +1,51 @@
+# code-server AI 开发环境 — 一键编排
+# 用法:
+#   启动:   docker compose up -d
+#   停止:   docker compose down          (数据都在 ./volumes/, 不会丢)
+#   更新镜像: docker load 新 tar 后 up -d
+# 所有持久化数据统一放在 ./volumes/ 下
+services:
+  code-server:
+    image: code-server-ai:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: code-server-ai
+    restart: unless-stopped
+    ports:
+      # 办公老 PC 需要浏览器访问 → 暴露到局域网; 仅本机访问可改回 "127.0.0.1:8080:8080"
+      - "8080:8080"
+    environment:
+      - PASSWORD=root1206
+      - TZ=Asia/Shanghai
+    volumes:
+      # 项目代码
+      - ./volumes/workspace:/home/coder/project
+      # code-server 数据与配置 (VSIX 扩展、用户设置, 重建容器不丢)
+      - ./volumes/code-server-data:/home/coder/.local/share/code-server
+      - ./volumes/code-server-config:/home/coder/.config/code-server
+      # opencode 全局配置 + skills (~/.config/.opencode/skills)
+      - ./volumes/opencode-config:/home/coder/.config/.opencode
+      # opencode 运行数据 (状态、会话、自动安装的依赖)
+      - ./volumes/opencode-share:/home/coder/.local/share/opencode
+      # opencode 缓存 (node_modules 类内容)
+      - ./volumes/opencode-cache:/home/coder/.cache/opencode
+      # AI CLI / MCP CLI 安装点: npm 全局前缀已指向 ~/.local,
+      # 容器里 `npm i -g xxx` 直接落到宿主机 ./volumes/local-bin, 免 sudo 且可持久化
+      - ./volumes/local-bin:/home/coder/.local
+      # npm 下载缓存: 在线时 npm i 填充, 离线后 npm install --offline 直接复用
+      - ./volumes/npm-cache:/home/coder/.npm
+      # pip 下载缓存: 在线时 pip install 填充, 离线后 --no-index --find-links 复用
+      - ./volumes/pip-cache:/home/coder/.cache/pip
+      # 离线 wheel 投放目录: 在线机 pip download 收集的 .whl 放这里, 容器内免联网安装
+      - ./volumes/python-wheels:/home/coder/wheels
+      # Go 包与构建缓存 (GOPATH, 含 pkg/mod 模块缓存)
+      - ./volumes/go-workspace:/home/coder/go
+      # (可选) 热升级 opencode: 放好新二进制后取消下行注释, `docker compose up -d` 即生效
+      # - ./opencode-bin-cli/opencode-linux-x64:/usr/local/bin/opencode:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

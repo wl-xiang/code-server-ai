@@ -1,0 +1,27 @@
+# 构建产物 / 离线镜像包（体积大，不入库）
+*.tar
+*.tgz
+results/
+logs/
+
+# opencode 原生二进制（按架构下载，不进 Git）
+opencode-bin-cli/
+
+# 运行时数据挂载目录（docker compose up 自动生成）
+volumes/
+workspace/
+code-server-data/
+code-server-config/
+opencode-config/
+opencode-share/
+opencode-cache/
+local-bin/
+npm-cache/
+pip-cache/
+python-wheels/
+go-workspace/
+
+# 系统与编辑器杂项
+.DS_Store
+Thumbs.db
+*.log

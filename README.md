@@ -39,6 +39,14 @@ docker build --build-arg NODE_VERSION=22.14.0 --build-arg GO_VERSION=1.27.1 \
     --build-arg APT_MIRROR=mirrors.aliyun.com -t code-server-ai:latest .
 ```
 
+## GitHub Actions 构建
+
+仓库自带 `action.yml`（composite action）与 `.github/workflows/build.yml`。
+Actions 页 → "Build Docker Image" → Run workflow → 选择目标部署架构
+（`x86_64` 默认 / `arm64`）。opencode 二进制会按架构自动从 npm 拉取，
+构建产物 `code-server-ai_<arch>.tar` + sha256 在运行页 artifact 下载，
+服务器 `docker load -i` 导入。
+
 ## 服务器部署 (CentOS 7)
 
 ```bash
@@ -55,8 +63,9 @@ docker compose down
 浏览器访问 `http://<服务器IP>:8080`，密码在 compose 的 `PASSWORD` 环境变量中。
 code-server 自带会话记忆：再次登录时会打开上一次浏览的目录。
 
-> ARM64 版本：Dockerfile 中把 x64 资源换成 arm64（opencode 二进制、Node/Go tarball、
-> yq 文件名）后用 `--platform linux/arm64` 构建，或找一台 ARM 机器原生构建（QEMU 太慢）。
+> ARM64 版本：`docker build --platform linux/arm64`（Dockerfile 已按 TARGETARCH 自动切换
+> arm64 资源，opencode 放 `opencode-bin-cli/opencode-linux-arm64`），或用 GitHub Actions
+> 选 arm64 构建；找一台 ARM 机器原生构建更快（QEMU 模拟较慢）。
 
 ## 持久化目录一览
 

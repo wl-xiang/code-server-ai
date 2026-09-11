@@ -1,0 +1,221 @@
+# code-server AI 开发环境镜像 — 构建 action
+#
+# 用法 (本仓库自带 .github/workflows/build.yml 调用; 其他仓库也可 uses: <owner>/<repo>@<ref>):
+#   - uses: ./
+#     with:
+#       arch: x86_64        # 目标部署服务器架构, 默认 x86_64, 可选 arm64
+#
+# 形态参考:
+#   - JamesIves/github-pages-deploy-action / peaceiris/actions-gh-pages:
+#       inputs 带默认值 + outputs + branding 的组织方式
+#   - actions/deploy-pages: composite action 的 step 组织方式
+#
+# 行为:
+#   1. 归一化 arch -> linux/amd64 | linux/arm64 (跨架构自动挂 QEMU)
+#   2. opencode 二进制 (gitignore 不入库) 按架构从 npm 平台包自动下载,
+#      已预置在 opencode-bin-cli/ 则跳过
+#   3. docker buildx build --platform <arch> --load
+#   4. docker save 导出带架构后缀的 tar + sha256 (命名与 build.sh 一致:
+#      code-server-ai_amd64.tar), 服务器 docker load -i 导入
+#   5. tar 与 sha256 作为 workflow artifact 上传
+name: 'Build Docker Image'
+description: 'Build the code-server AI dev environment Docker image for the target deployment server architecture (x86_64 or arm64) and export a docker-load-able tar artifact.'
+author: 'code-server-ai'
+
+branding:
+  icon: 'package'
+  color: 'blue'
+
+inputs:
+  # ---- 目标架构 ----
+  arch:
+    description: 'Target deployment server architecture: x86_64 (default) or arm64. Aliases amd64 / aarch64 are accepted.'
+    required: false
+    default: 'x86_64'
+
+  # ---- 镜像命名 ----
+  image-name:
+    description: 'Name to tag the built image with.'
+    required: false
+    default: 'code-server-ai'
+  image-tag:
+    description: 'Tag to tag the built image with.'
+    required: false
+    default: 'latest'
+
+  # ---- 构建位置 ----
+  context:
+    description: 'Docker build context directory, relative to the repository root.'
+    required: false
+    default: '.'
+  dockerfile:
+    description: 'Path to the Dockerfile, relative to the repository root.'
+    required: false
+    default: 'Dockerfile'
+
+  # ---- opencode 二进制 (其余 gitignore) ----
+  opencode-version:
+    description: 'opencode version to fetch from the npm platform package (opencode-linux-x64 / opencode-linux-arm64). Empty = latest. Skipped if the binary for the target arch is already present under <context>/opencode-bin-cli/.'
+    required: false
+    default: ''
+
+  # ---- Dockerfile 构建参数透传 (留空 = Dockerfile 内自动取最新) ----
+  node-version:
+    description: 'Build-arg NODE_VERSION: pin Node.js (e.g. 24.13.1). Empty = auto latest v24 LTS.'
+    required: false
+    default: ''
+  go-version:
+    description: 'Build-arg GO_VERSION: pin Go (e.g. 1.27.1). Empty = auto latest stable.'
+    required: false
+    default: ''
+  python-url:
+    description: 'Build-arg PYTHON_URL: python-build-standalone tarball URL. Empty = auto latest 3.14.x.'
+    required: false
+    default: ''
+  apt-mirror:
+    description: 'Build-arg APT_MIRROR: substitute apt mirror host (e.g. mirrors.aliyun.com). Empty = official Debian sources.'
+    required: false
+    default: ''
+
+  # ---- 产物 ----
+  upload-artifact:
+    description: 'Upload the exported tar (and its .sha256) as a workflow artifact, downloadable from the run page.'
+    required: false
+    default: 'true'
+
+outputs:
+  image:
+    description: 'Built image reference, e.g. code-server-ai:latest.'
+    value: ${{ steps.build.outputs.image }}
+  platform:
+    description: 'Resolved Docker platform, e.g. linux/amd64.'
+    value: ${{ steps.resolve.outputs.platform }}
+  tar-path:
+    description: 'Path of the exported docker-save tar, e.g. code-server-ai_amd64.tar.'
+    value: ${{ steps.export.outputs.tar-path }}
+  tar-sha256:
+    description: 'SHA256 checksum of the exported tar.'
+    value: ${{ steps.export.outputs.tar-sha256 }}
+
+runs:
+  using: 'composite'
+  steps:
+    # 1. 目标架构归一化 -> docker platform
+    - name: Resolve target platform
+      id: resolve
+      shell: bash
+      env:
+        INPUT_ARCH: ${{ inputs.arch }}
+      run: |
+        set -euo pipefail
+        case "$INPUT_ARCH" in
+          ""|x86_64|amd64)  DOCKER_ARCH=amd64 ;;
+          arm64|aarch64)    DOCKER_ARCH=arm64 ;;
+          *) echo "::error::Unsupported arch '${INPUT_ARCH}', expected x86_64 or arm64"; exit 1 ;;
+        esac
+        echo "docker-arch=${DOCKER_ARCH}" >> "$GITHUB_OUTPUT"
+        echo "platform=linux/${DOCKER_ARCH}" >> "$GITHUB_OUTPUT"
+        echo "Target deployment arch: ${INPUT_ARCH} -> linux/${DOCKER_ARCH}"
+
+    # 2. 跨架构构建时启用 QEMU (x86_64 runner 构建 arm64, 或反向)
+    - name: Set up QEMU for cross-build
+      if: ${{ (runner.arch == 'X64' && steps.resolve.outputs.docker-arch == 'arm64') || (runner.arch == 'ARM64' && steps.resolve.outputs.docker-arch == 'amd64') }}
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    # 3. opencode 二进制: 按目标架构放入构建上下文
+    #    (opencode-bin-cli/ 不入 Git; GitHub Releases 已不放 Linux 包, 官方渠道是 npm 平台包)
+    - name: Fetch opencode binary for target arch
+      shell: bash
+      env:
+        DOCKER_ARCH: ${{ steps.resolve.outputs.docker-arch }}
+        OPENCODE_VERSION: ${{ inputs.opencode-version }}
+        CONTEXT: ${{ inputs.context }}
+      run: |
+        set -euo pipefail
+        case "$DOCKER_ARCH" in
+          amd64) OC_ARCH=x64 ;;
+          arm64) OC_ARCH=arm64 ;;
+        esac
+        mkdir -p "$CONTEXT/opencode-bin-cli"
+        DEST="$CONTEXT/opencode-bin-cli/opencode-linux-$OC_ARCH"
+
+        if [ -f "$DEST" ]; then
+          echo "Using pre-placed $DEST"
+        else
+          if [ -z "$OPENCODE_VERSION" ]; then
+            OPENCODE_VERSION=$(curl -fsSL "https://registry.npmjs.org/opencode-linux-$OC_ARCH" \
+              | jq -r '."dist-tags".latest')
+          fi
+          echo "Downloading opencode-linux-$OC_ARCH@$OPENCODE_VERSION from npm"
+          curl -fsSL -o /tmp/opencode.tgz \
+            "https://registry.npmjs.org/opencode-linux-$OC_ARCH/-/opencode-linux-$OC_ARCH-$OPENCODE_VERSION.tgz"
+          tar -xzf /tmp/opencode.tgz -C /tmp
+          install -m 755 /tmp/package/bin/opencode "$DEST"
+        fi
+
+        # Dockerfile 用通配 COPY, 上下文里多于一个 opencode 二进制会导致构建失败,
+        # 只保留目标架构的那个
+        find "$CONTEXT/opencode-bin-cli" -maxdepth 1 -type f \
+            ! -name "opencode-linux-$OC_ARCH" -print -delete
+
+    # 4. 构建 (Dockerfile 按 buildx 自动注入的 TARGETARCH 切换各运行时资源)
+    - name: Build image
+      id: build
+      shell: bash
+      env:
+        PLATFORM: ${{ steps.resolve.outputs.platform }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        CONTEXT: ${{ inputs.context }}
+        DOCKERFILE: ${{ inputs.dockerfile }}
+        NODE_VERSION: ${{ inputs.node-version }}
+        GO_VERSION: ${{ inputs.go-version }}
+        PYTHON_URL: ${{ inputs.python-url }}
+        APT_MIRROR: ${{ inputs.apt-mirror }}
+      run: |
+        set -euo pipefail
+        IMAGE="$IMAGE_NAME:$IMAGE_TAG"
+        echo "Building $IMAGE for $PLATFORM"
+        docker buildx build \
+          --platform "$PLATFORM" \
+          --file "$DOCKERFILE" \
+          --build-arg "NODE_VERSION=$NODE_VERSION" \
+          --build-arg "GO_VERSION=$GO_VERSION" \
+          --build-arg "PYTHON_URL=$PYTHON_URL" \
+          --build-arg "APT_MIRROR=$APT_MIRROR" \
+          --tag "$IMAGE" \
+          --load \
+          "$CONTEXT"
+        echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+    # 5. 导出离线 tar + sha256 (命名与 build.sh 一致: code-server-ai_amd64.tar)
+    - name: Export image tar and checksum
+      id: export
+      shell: bash
+      env:
+        IMAGE: ${{ steps.build.outputs.image }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        DOCKER_ARCH: ${{ steps.resolve.outputs.docker-arch }}
+      run: |
+        set -euo pipefail
+        TAR="${IMAGE_NAME}_${DOCKER_ARCH}.tar"
+        echo "Exporting $IMAGE -> $TAR"
+        docker save -o "$TAR" "$IMAGE"
+        sha256sum "$TAR" > "$TAR.sha256"
+        echo "tar-path=$TAR" >> "$GITHUB_OUTPUT"
+        echo "tar-sha256=$(cut -d' ' -f1 "$TAR.sha256")" >> "$GITHUB_OUTPUT"
+        ls -lh "$TAR" "$TAR.sha256"
+
+    # 6. 上传 artifact, 构建完成后在 Actions 运行页下载, 服务器上 docker load -i
+    - name: Upload image tar artifact
+      if: ${{ inputs.upload-artifact == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-image-linux-${{ steps.resolve.outputs.docker-arch }}
+        path: |
+          ${{ steps.export.outputs.tar-path }}
+          ${{ steps.export.outputs.tar-path }}.sha256
+        if-no-files-found: error

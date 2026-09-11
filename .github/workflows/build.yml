@@ -1,0 +1,65 @@
+# 构建镜像: Actions 页面 → "Build Docker Image" → Run workflow,
+# 选择目标部署服务器架构 (默认 x86_64), 跑完在运行页下载 tar artifact
+name: Build Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: 'Target deployment server architecture'
+        type: choice
+        options:
+          - x86_64
+          - arm64
+        default: x86_64
+      image-tag:
+        description: 'Image tag'
+        required: false
+        default: latest
+      opencode-version:
+        description: 'opencode version (empty = npm latest)'
+        required: false
+        default: ''
+  # 如需 push 时自动构建 x86_64, 取消注释:
+  # push:
+  #   branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # arm64 在 x86_64 runner 上走 QEMU 模拟构建, 可用但较慢;
+    # 要快可用 arm 原生 runner: runs-on: ubuntu-24.04-arm (action 会自动跳过 QEMU)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        id: build
+        uses: ./              # 本仓库根目录的 action.yml
+        with:
+          arch: ${{ inputs.arch || 'x86_64' }}
+          image-tag: ${{ inputs.image-tag || 'latest' }}
+          opencode-version: ${{ inputs.opencode-version }}
+
+      - name: Job summary
+        shell: bash
+        run: |
+          {
+            echo "## Docker image built"
+            echo
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Image | \`${{ steps.build.outputs.image }}\` |"
+            echo "| Platform | \`${{ steps.build.outputs.platform }}\` |"
+            echo "| Tar | \`${{ steps.build.outputs.tar-path }}\` |"
+            echo "| SHA256 | \`${{ steps.build.outputs.tar-sha256 }}\` |"
+            echo
+            echo "Download the \`docker-image-linux-*\` artifact from this run's page, then on the server:"
+            echo
+            echo '```bash'
+            echo 'docker load -i <tar>'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

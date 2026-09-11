@@ -1,14 +1,19 @@
 # ============================================================
-# code-server AI 开发环境镜像 (linux/amd64)
+# code-server AI 开发环境镜像 (multi-arch: linux/amd64 | linux/arm64)
 # Base: codercom/code-server (官方发布镜像, Ubuntu)
 # Source repo: https://github.com/coder/code-server
 #
-# ARM64 构建: 将 opencode COPY 换成 opencode-linux-arm64,
-# Node/Go tarball 换 -linux-arm64, yq 换 yq_linux_arm64 即可
+# 架构由 --platform 控制 (buildx 自动注入 TARGETARCH):
+#   x86_64: docker build --platform linux/amd64 (默认)
+#   arm64 : docker build --platform linux/arm64
+# Node/Python/Go/yq/opencode/Oracle 下载资源均按 TARGETARCH 自动切换
 # ============================================================
 FROM codercom/code-server:latest
 
 USER root
+
+# 目标架构: buildx 由 --platform 自动注入; 本地 docker build 默认 amd64
+ARG TARGETARCH=amd64
 
 # ---------- 构建参数 ----------
 # apt 镜像源 (留空 = 官方源 deb.debian.org; 网络不通时再改如 mirrors.aliyun.com)
@@ -46,7 +51,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------- 2. yq (apt 源里没有, GitHub 最新版) ----------
-RUN curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64" \
+RUN curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${TARGETARCH}" \
         -o /usr/local/bin/yq \
     && chmod 755 /usr/local/bin/yq
 
@@ -55,15 +60,17 @@ RUN if [ -z "$NODE_VERSION" ]; then \
         NODE_VERSION=$(curl -fsSL 'https://nodejs.org/dist/index.json' \
             | grep -oP '"version":\s*"\Kv24\.[0-9.]+' | head -1); \
     fi \
-    && echo "Installing Node ${NODE_VERSION}" \
-    && curl -fsSL "https://registry.npmmirror.com/-/binary/node/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz" \
+    && case "$TARGETARCH" in arm64) NODE_ARCH=arm64 ;; *) NODE_ARCH=x64 ;; esac \
+    && echo "Installing Node ${NODE_VERSION} (linux-${NODE_ARCH})" \
+    && curl -fsSL "https://registry.npmmirror.com/-/binary/node/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
         | tar -xJ --strip-components=1 -C /usr/local
 
 # ---------- 4. Python 3.14 (python-build-standalone 预编译包, 自动取最新 3.14.x) ----------
 # 预编译包解压到 /usr/local 后, /usr/local/bin/python3 优先于系统 /usr/bin/python3(3.13)
-RUN if [ -z "$PYTHON_URL" ]; then \
+RUN case "$TARGETARCH" in arm64) PY_ARCH=aarch64 ;; *) PY_ARCH=x86_64 ;; esac \
+    && if [ -z "$PYTHON_URL" ]; then \
         PYTHON_URL=$(curl -fsSL https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest \
-            | grep -oP '"browser_download_url":\s*"\K[^"]*cpython-3\.14\.[0-9.]+[^"]*x86_64-unknown-linux-gnu-install_only\.tar\.gz' \
+            | grep -oP '"browser_download_url":\s*"\K[^"]*cpython-3\.14\.[0-9.]+[^"]*'${PY_ARCH}'-unknown-linux-gnu-install_only\.tar\.gz' \
             | grep -v freethreaded | head -1); \
     fi \
     && echo "Installing Python: ${PYTHON_URL}" \
@@ -78,22 +85,27 @@ RUN GO_VER=$(if [ -n "$GO_VERSION" ]; then echo "$GO_VERSION"; \
         else curl -fsSL 'https://go.dev/dl/?mode=json' \
             | grep -oP '"version":\s*"\Kgo[0-9.]+' | head -1 | sed 's/^go//'; fi) \
     && echo "Installing Go ${GO_VER}" \
-    && (curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-amd64.tar.gz" -o /tmp/go.tgz \
-        || curl -fsSL "https://mirrors.aliyun.com/golang/go${GO_VER}.linux-amd64.tar.gz" -o /tmp/go.tgz) \
+    && (curl -fsSL "https://go.dev/dl/go${GO_VER}.linux-${TARGETARCH}.tar.gz" -o /tmp/go.tgz \
+        || curl -fsSL "https://mirrors.aliyun.com/golang/go${GO_VER}.linux-${TARGETARCH}.tar.gz" -o /tmp/go.tgz) \
     && tar -C /usr/local -xzf /tmp/go.tgz \
     && rm -f /tmp/go.tgz
 
 # ---------- 6. opencode (本地二进制, root 安装到系统路径) ----------
 # 官方镜像的 coder 用户自带免密 sudo, 但我们把 opencode 装到 /usr/local/bin,
 # coder 直接可用; opencode 运行时写入 ~/ 的内容由 coder 自己创建, 无权限问题
-COPY opencode-bin-cli/opencode-linux-x64 /usr/local/bin/opencode
+# 二进制按目标架构命名: opencode-linux-x64 / opencode-linux-arm64,
+# 构建上下文 opencode-bin-cli/ 里只放目标架构那一个 (CI/action 会按架构自动下载)
+COPY opencode-bin-cli/opencode-* /usr/local/bin/opencode
 RUN chmod 755 /usr/local/bin/opencode
 
 # ---------- 7. Oracle Instant Client (构建时自动下载最新版) ----------
 # 提供 libclntsh.so (oracleclient) 等 OCI 库, 供 python-oracledb(thick 模式)/cx_Oracle 等使用
-RUN mkdir -p /opt/oracle \
-    && curl -fsSL "https://download.oracle.com/otn_software/linux/instantclient/instantclient-basic-linux.zip" \
-        -o /tmp/oic.zip \
+RUN case "$TARGETARCH" in \
+        arm64) OIC_URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-basic-linux-arm64.zip" ;; \
+        *)     OIC_URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-basic-linux.zip" ;; \
+    esac \
+    && mkdir -p /opt/oracle \
+    && curl -fsSL "$OIC_URL" -o /tmp/oic.zip \
     && unzip -q /tmp/oic.zip -d /opt/oracle \
     && rm -f /tmp/oic.zip \
     && mv /opt/oracle/instantclient_* /opt/oracle/instantclient \

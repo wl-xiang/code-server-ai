@@ -20,6 +20,13 @@ on:
         description: 'opencode version (empty = npm latest)'
         required: false
         default: ''
+      archive-format:
+        description: 'Archive format for the exported image'
+        type: choice
+        options:
+          - tgz
+          - zip
+        default: tgz
   # 如需 push 时自动构建 x86_64, 取消注释:
   # push:
   #   branches: [main]
@@ -43,6 +50,7 @@ jobs:
           arch: ${{ inputs.arch || 'x86_64' }}
           image-tag: ${{ inputs.image-tag || 'latest' }}
           opencode-version: ${{ inputs.opencode-version }}
+          archive-format: ${{ inputs.archive-format || 'tgz' }}
 
       - name: Job summary
         shell: bash
@@ -54,12 +62,12 @@ jobs:
             echo "|---|---|"
             echo "| Image | \`${{ steps.build.outputs.image }}\` |"
             echo "| Platform | \`${{ steps.build.outputs.platform }}\` |"
-            echo "| Tar | \`${{ steps.build.outputs.tar-path }}\` |"
-            echo "| SHA256 | \`${{ steps.build.outputs.tar-sha256 }}\` |"
+            echo "| Archive | \`${{ steps.build.outputs.archive-path }}\` |"
+            echo "| SHA256 | \`${{ steps.build.outputs.archive-sha256 }}\` |"
             echo
             echo "Download the \`docker-image-linux-*\` artifact from this run's page, then on the server:"
             echo
             echo '```bash'
-            echo 'docker load -i <tar>'
+            echo 'docker load -i <archive>'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

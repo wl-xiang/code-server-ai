@@ -79,9 +79,13 @@ inputs:
 
   # ---- 产物 ----
   upload-artifact:
-    description: 'Upload the exported tar (and its .sha256) as a workflow artifact, downloadable from the run page.'
+    description: 'Upload the exported archive (and its .sha256) as a workflow artifact, downloadable from the run page.'
     required: false
     default: 'true'
+  archive-format:
+    description: 'Archive format for the exported image: tgz (compressed tar, default) or zip.'
+    required: false
+    default: 'tgz'
 
 outputs:
   image:
@@ -90,12 +94,12 @@ outputs:
   platform:
     description: 'Resolved Docker platform, e.g. linux/amd64.'
     value: ${{ steps.resolve.outputs.platform }}
-  tar-path:
-    description: 'Path of the exported docker-save tar, e.g. code-server-ai_amd64.tar.'
-    value: ${{ steps.export.outputs.tar-path }}
-  tar-sha256:
-    description: 'SHA256 checksum of the exported tar.'
-    value: ${{ steps.export.outputs.tar-sha256 }}
+  archive-path:
+    description: 'Path of the exported archive, e.g. code-server-ai_docker-images_amd64.tgz.'
+    value: ${{ steps.export.outputs.archive-path }}
+  archive-sha256:
+    description: 'SHA256 checksum of the exported archive.'
+    value: ${{ steps.export.outputs.archive-sha256 }}
 
 runs:
   using: 'composite'
@@ -195,31 +199,64 @@ runs:
           "$CONTEXT"
         echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
-    # 5. 导出离线 tar + sha256 (命名与 build.sh 一致: code-server-ai_amd64.tar)
-    - name: Export image tar and checksum
+    # 5. 导出离线镜像 + sha256 (命名格式: <repo>_docker-images_<arch>.<ext>)
+    - name: Export image archive and checksum
       id: export
       shell: bash
       env:
         IMAGE: ${{ steps.build.outputs.image }}
         IMAGE_NAME: ${{ inputs.image-name }}
         DOCKER_ARCH: ${{ steps.resolve.outputs.docker-arch }}
+        ARCHIVE_FORMAT: ${{ inputs.archive-format }}
       run: |
         set -euo pipefail
-        TAR="${IMAGE_NAME}_${DOCKER_ARCH}.tar"
-        echo "Exporting $IMAGE -> $TAR"
-        docker save -o "$TAR" "$IMAGE"
-        sha256sum "$TAR" > "$TAR.sha256"
-        echo "tar-path=$TAR" >> "$GITHUB_OUTPUT"
-        echo "tar-sha256=$(cut -d' ' -f1 "$TAR.sha256")" >> "$GITHUB_OUTPUT"
-        ls -lh "$TAR" "$TAR.sha256"
+        # 获取仓库名 (从 GITHUB_REPOSITORY 环境变量)
+        REPO_NAME="${GITHUB_REPOSITORY##*/}"
+
+        # 根据格式确定扩展名和压缩方式
+        case "$ARCHIVE_FORMAT" in
+          tgz|tar.gz)
+            EXT="tgz"
+            COMPRESS="gzip"
+            ;;
+          zip)
+            EXT="zip"
+            COMPRESS="zip"
+            ;;
+          *)
+            echo "::error::Unsupported archive format '${ARCHIVE_FORMAT}', expected tgz or zip"
+            exit 1
+            ;;
+        esac
+
+        ARCHIVE_NAME="${REPO_NAME}_docker-images_${DOCKER_ARCH}.${EXT}"
+        echo "Exporting $IMAGE -> $ARCHIVE_NAME"
+
+        # 导出为 tar 并压缩
+        case "$COMPRESS" in
+          gzip)
+            docker save "$IMAGE" | gzip -c > "$ARCHIVE_NAME"
+            ;;
+          zip)
+            TAR_NAME="${REPO_NAME}_docker-images_${DOCKER_ARCH}.tar"
+            docker save -o "$TAR_NAME" "$IMAGE"
+            zip -q "$ARCHIVE_NAME" "$TAR_NAME"
+            rm -f "$TAR_NAME"
+            ;;
+        esac
+
+        sha256sum "$ARCHIVE_NAME" > "$ARCHIVE_NAME.sha256"
+        echo "archive-path=$ARCHIVE_NAME" >> "$GITHUB_OUTPUT"
+        echo "archive-sha256=$(cut -d' ' -f1 "$ARCHIVE_NAME.sha256")" >> "$GITHUB_OUTPUT"
+        ls -lh "$ARCHIVE_NAME" "$ARCHIVE_NAME.sha256"
 
     # 6. 上传 artifact, 构建完成后在 Actions 运行页下载, 服务器上 docker load -i
-    - name: Upload image tar artifact
+    - name: Upload image archive artifact
       if: ${{ inputs.upload-artifact == 'true' }}
       uses: actions/upload-artifact@v4
       with:
         name: docker-image-linux-${{ steps.resolve.outputs.docker-arch }}
         path: |
-          ${{ steps.export.outputs.tar-path }}
-          ${{ steps.export.outputs.tar-path }}.sha256
+          ${{ steps.export.outputs.archive-path }}
+          ${{ steps.export.outputs.archive-path }}.sha256
         if-no-files-found: error

@@ -161,12 +161,13 @@ runs:
         find "$CONTEXT/opencode-bin-cli" -maxdepth 1 -type f \
             ! -name "opencode-linux-$OC_ARCH" -print -delete
 
-    # 4. 构建 (Dockerfile 按 buildx 自动注入的 TARGETARCH 切换各运行时资源)
+    # 4. 构建 (Dockerfile 按 TARGETARCH 切换各运行时资源)
     - name: Build image
       id: build
       shell: bash
       env:
         PLATFORM: ${{ steps.resolve.outputs.platform }}
+        DOCKER_ARCH: ${{ steps.resolve.outputs.docker-arch }}
         IMAGE_NAME: ${{ inputs.image-name }}
         IMAGE_TAG: ${{ inputs.image-tag }}
         CONTEXT: ${{ inputs.context }}
@@ -179,9 +180,12 @@ runs:
         set -euo pipefail
         IMAGE="$IMAGE_NAME:$IMAGE_TAG"
         echo "Building $IMAGE for $PLATFORM"
+        # 显式传 TARGETARCH: 不依赖 buildx 自动注入 (Dockerfile 里 ARG 写了默认值时
+        # 自动注入会被默认值覆盖, 曾导致 arm64 构建下载了全部 x86_64 资源)
         docker buildx build \
           --platform "$PLATFORM" \
           --file "$DOCKERFILE" \
+          --build-arg "TARGETARCH=$DOCKER_ARCH" \
           --build-arg "NODE_VERSION=$NODE_VERSION" \
           --build-arg "GO_VERSION=$GO_VERSION" \
           --build-arg "PYTHON_URL=$PYTHON_URL" \

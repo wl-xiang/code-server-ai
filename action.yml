@@ -95,11 +95,17 @@ outputs:
     description: 'Resolved Docker platform, e.g. linux/amd64.'
     value: ${{ steps.resolve.outputs.platform }}
   archive-path:
-    description: 'Path of the exported archive, e.g. code-server-ai_docker-images_amd64.tgz.'
+    description: 'Path of the exported docker image archive, e.g. code-server-ai_docker-images_amd64.tgz.'
     value: ${{ steps.export.outputs.archive-path }}
   archive-sha256:
-    description: 'SHA256 checksum of the exported archive.'
+    description: 'SHA256 checksum of the docker image archive.'
     value: ${{ steps.export.outputs.archive-sha256 }}
+  source-path:
+    description: 'Path of the source code archive, e.g. code-server-ai_source.tgz.'
+    value: ${{ steps.source.outputs.source-path }}
+  source-sha256:
+    description: 'SHA256 checksum of the source code archive.'
+    value: ${{ steps.source.outputs.source-sha256 }}
 
 runs:
   using: 'composite'
@@ -250,13 +256,77 @@ runs:
         echo "archive-sha256=$(cut -d' ' -f1 "$ARCHIVE_NAME.sha256")" >> "$GITHUB_OUTPUT"
         ls -lh "$ARCHIVE_NAME" "$ARCHIVE_NAME.sha256"
 
-    # 6. 上传 artifact, 构建完成后在 Actions 运行页下载, 服务器上 docker load -i
-    - name: Upload image archive artifact
+    # 6. 打包源代码 + sha256 (命名格式: <repo>_source.<ext>)
+    - name: Package source code archive
+      id: source
+      shell: bash
+      env:
+        ARCHIVE_FORMAT: ${{ inputs.archive-format }}
+        CONTEXT: ${{ inputs.context }}
+      run: |
+        set -euo pipefail
+        # 获取仓库名 (从 GITHUB_REPOSITORY 环境变量)
+        REPO_NAME="${GITHUB_REPOSITORY##*/}"
+
+        # 根据格式确定扩展名和压缩方式
+        case "$ARCHIVE_FORMAT" in
+          tgz|tar.gz)
+            EXT="tgz"
+            COMPRESS="gzip"
+            ;;
+          zip)
+            EXT="zip"
+            COMPRESS="zip"
+            ;;
+          *)
+            echo "::error::Unsupported archive format '${ARCHIVE_FORMAT}', expected tgz or zip"
+            exit 1
+            ;;
+        esac
+
+        SOURCE_ARCHIVE="${REPO_NAME}_source.${EXT}"
+        echo "Packaging source code -> $SOURCE_ARCHIVE"
+
+        # 打包源代码, 排除构建产物和临时文件
+        case "$COMPRESS" in
+          gzip)
+            tar -czf "$SOURCE_ARCHIVE" \
+              --exclude='.git' \
+              --exclude='node_modules' \
+              --exclude='*.tgz' \
+              --exclude='*.zip' \
+              --exclude='*.tar' \
+              --exclude='opencode-bin-cli' \
+              -C "$CONTEXT" .
+            ;;
+          zip)
+            cd "$CONTEXT"
+            zip -rq "$SOURCE_ARCHIVE" . \
+              -x '.git/*' \
+              -x 'node_modules/*' \
+              -x '*.tgz' \
+              -x '*.zip' \
+              -x '*.tar' \
+              -x 'opencode-bin-cli/*'
+            mv "$SOURCE_ARCHIVE" ..
+            cd - > /dev/null
+            ;;
+        esac
+
+        sha256sum "$SOURCE_ARCHIVE" > "$SOURCE_ARCHIVE.sha256"
+        echo "source-path=$SOURCE_ARCHIVE" >> "$GITHUB_OUTPUT"
+        echo "source-sha256=$(cut -d' ' -f1 "$SOURCE_ARCHIVE.sha256")" >> "$GITHUB_OUTPUT"
+        ls -lh "$SOURCE_ARCHIVE" "$SOURCE_ARCHIVE.sha256"
+
+    # 7. 上传 artifact (docker 镜像包 + 源代码包 + 校验文件)
+    - name: Upload all artifacts
       if: ${{ inputs.upload-artifact == 'true' }}
       uses: actions/upload-artifact@v4
       with:
-        name: docker-image-linux-${{ steps.resolve.outputs.docker-arch }}
+        name: release-linux-${{ steps.resolve.outputs.docker-arch }}
         path: |
           ${{ steps.export.outputs.archive-path }}
           ${{ steps.export.outputs.archive-path }}.sha256
+          ${{ steps.source.outputs.source-path }}
+          ${{ steps.source.outputs.source-path }}.sha256
         if-no-files-found: error

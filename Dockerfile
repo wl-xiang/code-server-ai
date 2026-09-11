@@ -12,8 +12,11 @@ FROM codercom/code-server:latest
 
 USER root
 
-# 目标架构: buildx 由 --platform 自动注入; 本地 docker build 默认 amd64
-ARG TARGETARCH=amd64
+# 目标架构: buildx 按 --platform 自动注入 (不指定 = 宿主架构)。
+# 注意: 不能写默认值! 写了默认值 (如 =amd64) 会覆盖自动注入的值,
+# 导致跨架构构建 arm64 时所有下载仍用 x86_64 资源 (即此前 arm64 构建失败的原因)。
+# CI action 里为保险起见还会显式传 --build-arg TARGETARCH=amd64|arm64
+ARG TARGETARCH
 
 # ---------- 构建参数 ----------
 # apt 镜像源 (留空 = 官方源 deb.debian.org; 网络不通时再改如 mirrors.aliyun.com)
@@ -66,7 +69,9 @@ RUN if [ -z "$NODE_VERSION" ]; then \
         | tar -xJ --strip-components=1 -C /usr/local
 
 # ---------- 4. Python 3.14 (python-build-standalone 预编译包, 自动取最新 3.14.x) ----------
-# 预编译包解压到 /usr/local 后, /usr/local/bin/python3 优先于系统 /usr/bin/python3(3.13)
+# 预编译包解压到 /usr/local 后, /usr/local/bin/python3 优先于系统 /usr/bin/python3(3.13)。
+# install_only 包已自带 pip (site-packages/pip-*.dist-info + bin/pip3, 指向同目录 python3.14),
+# 无需 ensurepip —— 且 arm64 走 QEMU 模拟时 ensurepip 的子进程执行又慢又易出问题, 直接验证版本即可
 RUN case "$TARGETARCH" in arm64) PY_ARCH=aarch64 ;; *) PY_ARCH=x86_64 ;; esac \
     && if [ -z "$PYTHON_URL" ]; then \
         PYTHON_URL=$(curl -fsSL https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest \
@@ -77,7 +82,6 @@ RUN case "$TARGETARCH" in arm64) PY_ARCH=aarch64 ;; *) PY_ARCH=x86_64 ;; esac \
     && curl -fsSL "$PYTHON_URL" -o /tmp/py.tgz \
     && tar -xzf /tmp/py.tgz --strip-components=1 -C /usr/local \
     && rm -f /tmp/py.tgz \
-    && python3 -m ensurepip --upgrade \
     && python3 --version && pip3 --version | cut -d' ' -f1-2
 
 # ---------- 5. Go (go.dev 自动取最新版, 失败回退阿里云镜像) ----------

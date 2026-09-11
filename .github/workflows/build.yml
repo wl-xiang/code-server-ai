@@ -56,8 +56,9 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## Docker image built"
+            echo "## Build artifacts"
             echo
+            echo "### Docker Image"
             echo "| Item | Value |"
             echo "|---|---|"
             echo "| Image | \`${{ steps.build.outputs.image }}\` |"
@@ -65,8 +66,15 @@ jobs:
             echo "| Archive | \`${{ steps.build.outputs.archive-path }}\` |"
             echo "| SHA256 | \`${{ steps.build.outputs.archive-sha256 }}\` |"
             echo
-            echo "Download the \`docker-image-linux-*\` artifact from this run's page, then on the server:"
+            echo "### Source Code"
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Archive | \`${{ steps.build.outputs.source-path }}\` |"
+            echo "| SHA256 | \`${{ steps.build.outputs.source-sha256 }}\` |"
             echo
+            echo "Download the \`release-linux-*\` artifact from this run's page."
+            echo
+            echo "On the server, load the docker image:"
             echo '```bash'
             echo 'docker load -i <archive>'
             echo '```'

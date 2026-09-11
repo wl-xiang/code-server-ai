@@ -1,3 +1,3 @@
-# 只把 opencode x64 二进制带进构建上下文, 其余全部忽略
+# 只把 opencode 二进制 (目标架构那个) 带进构建上下文, 其余全部忽略
 *
-!opencode-bin-cli/opencode-linux-x64
+!opencode-bin-cli/*

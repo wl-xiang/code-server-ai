@@ -23,7 +23,7 @@ ARG TARGETARCH
 ARG APT_MIRROR=
 # Node 版本: 留空 = 构建时自动获取 v24 LTS 最新版 (如需固定: 24.13.1)
 ARG NODE_VERSION=
-# Python 3.14 预编译包完整下载地址: 留空 = 从 GitHub 自动获取最新 3.14.x
+# Python 3.13 预编译包完整下载地址: 留空 = 从 GitHub 自动获取最新 3.13.x
 # (python-build-standalone 项目, 离线构建可先下载后用 ARG 指定本地路径不可行,
 #  应把 URL 指向内网 HTTP 服务)
 ARG PYTHON_URL=
@@ -68,14 +68,14 @@ RUN if [ -z "$NODE_VERSION" ]; then \
     && curl -fsSL "https://registry.npmmirror.com/-/binary/node/${NODE_VERSION}/node-${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
         | tar -xJ --strip-components=1 -C /usr/local
 
-# ---------- 4. Python 3.14 (python-build-standalone 预编译包, 自动取最新 3.14.x) ----------
-# 预编译包解压到 /usr/local 后, /usr/local/bin/python3 优先于系统 /usr/bin/python3(3.13)。
-# install_only 包已自带 pip (site-packages/pip-*.dist-info + bin/pip3, 指向同目录 python3.14),
+# ---------- 4. Python 3.13 (python-build-standalone 预编译包, 自动取最新 3.13.x) ----------
+# 预编译包解压到 /usr/local 后, /usr/local/bin/python3 优先于系统 /usr/bin/python3。
+# install_only 包已自带 pip (site-packages/pip-*.dist-info + bin/pip3, 指向同目录 python3.13),
 # 无需 ensurepip —— 且 arm64 走 QEMU 模拟时 ensurepip 的子进程执行又慢又易出问题, 直接验证版本即可
 RUN case "$TARGETARCH" in arm64) PY_ARCH=aarch64 ;; *) PY_ARCH=x86_64 ;; esac \
     && if [ -z "$PYTHON_URL" ]; then \
         PYTHON_URL=$(curl -fsSL https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest \
-            | grep -oP '"browser_download_url":\s*"\K[^"]*cpython-3\.14\.[0-9.]+[^"]*'${PY_ARCH}'-unknown-linux-gnu-install_only\.tar\.gz' \
+            | grep -oP '"browser_download_url":\s*"\K[^"]*cpython-3\.13\.[0-9.]+[^"]*'${PY_ARCH}'-unknown-linux-gnu-install_only\.tar\.gz' \
             | grep -v freethreaded | head -1); \
     fi \
     && echo "Installing Python: ${PYTHON_URL}" \

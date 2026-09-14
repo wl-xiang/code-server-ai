@@ -288,9 +288,14 @@ runs:
         echo "Packaging source code -> $SOURCE_ARCHIVE"
 
         # 打包源代码, 排除构建产物和临时文件
+        # 归档文件不能写在被打包的目录里 (默认 CONTEXT=. 即工作区): tar 读取目录
+        # 期间压缩归档文件才在目录内创建/增长, tar 结束时检测到 "." 已变化, 报
+        # "file changed as we read it" 且退出码为 1 (是否触发取决于调度时序, 时好时坏)。
+        # 因此先写入 CONTEXT 之外的临时目录, 打包完成后再移回当前目录。
+        STAGING_DIR="$(mktemp -d)"
         case "$COMPRESS" in
           gzip)
-            tar -czf "$SOURCE_ARCHIVE" \
+            tar -czf "${STAGING_DIR}/${SOURCE_ARCHIVE}" \
               --exclude='.git' \
               --exclude='node_modules' \
               --exclude='*.tgz' \
@@ -300,18 +305,17 @@ runs:
               -C "$CONTEXT" .
             ;;
           zip)
-            cd "$CONTEXT"
-            zip -rq "$SOURCE_ARCHIVE" . \
+            (cd "$CONTEXT" && zip -rq "${STAGING_DIR}/${SOURCE_ARCHIVE}" . \
               -x '.git/*' \
               -x 'node_modules/*' \
               -x '*.tgz' \
               -x '*.zip' \
               -x '*.tar' \
-              -x 'opencode-bin-cli/*'
-            mv "$SOURCE_ARCHIVE" ..
-            cd - > /dev/null
+              -x 'opencode-bin-cli/*')
             ;;
         esac
+        mv "${STAGING_DIR}/${SOURCE_ARCHIVE}" "$SOURCE_ARCHIVE"
+        rmdir "$STAGING_DIR"
 
         sha256sum "$SOURCE_ARCHIVE" > "$SOURCE_ARCHIVE.sha256"
         echo "source-path=$SOURCE_ARCHIVE" >> "$GITHUB_OUTPUT"

@@ -102,11 +102,15 @@ RUN GO_VER=$(if [ -n "$GO_VERSION" ]; then echo "$GO_VERSION"; \
 COPY opencode-bin-cli/opencode-* /usr/local/bin/opencode
 RUN chmod 755 /usr/local/bin/opencode
 
-# ---------- 7. Oracle Instant Client (构建时自动下载最新版) ----------
-# 提供 libclntsh.so (oracleclient) 等 OCI 库, 供 python-oracledb(thick 模式)/cx_Oracle 等使用
+# ---------- 7. Oracle Instant Client (固定 64 位版本) ----------
+# 提供 libclntsh.so (oracleclient) 等 OCI 库, 供 python-oracledb(thick 模式)/cx_Oracle 等使用。
+# 注意: 不要用无后缀的通配 URL (instantclient-basic-linux.zip / -arm64.zip),
+# 它们提供的是 32 位构建 (x86 i686 / arm 32bit), 64 位系统上 python-oracledb
+# 加载 libclntsh.so 会报 "wrong ELF class" 错误, 必须用带 .x64/.arm64 的官方固定版本。
+# 版本说明: 21c 系列仅提供 x86-64 包; arm64 需用 19c 系列 (均只需 glibc 2.14)
 RUN case "$TARGETARCH" in \
-        arm64) OIC_URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-basic-linux-arm64.zip" ;; \
-        *)     OIC_URL="https://download.oracle.com/otn_software/linux/instantclient/instantclient-basic-linux.zip" ;; \
+        arm64) OIC_URL="https://download.oracle.com/otn_software/linux/instantclient/1932000/instantclient-basic-linux.arm64-19.32.0.0.0dbru.zip" ;; \
+        *)     OIC_URL="https://download.oracle.com/otn_software/linux/instantclient/2123000/instantclient-basic-linux.x64-21.23.0.0.0dbru.zip" ;; \
     esac \
     && mkdir -p /opt/oracle \
     && curl -fsSL "$OIC_URL" -o /tmp/oic.zip \

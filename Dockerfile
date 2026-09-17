@@ -51,6 +51,11 @@ RUN if [ -n "$APT_MIRROR" ]; then \
 # libaio (Oracle 运行时依赖): Debian 13+ 改名 libaio1t64, 旧版 Debian/Ubuntu 仍叫 libaio1
     && (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libaio1t64 \
         || DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libaio1) \
+    && rm -rf /var/lib/apt/lists/* \
+# libnsl (Oracle Instant Client 19c arm64 运行时依赖; 21c x86_64 不需要, 但装了无害):
+# Debian 13+/Ubuntu 22.04+ 叫 libnsl2, 旧版叫 libnsl1
+    && (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libnsl2 \
+        || DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libnsl1) \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------- 2. yq (apt 源里没有, GitHub 最新版) ----------
